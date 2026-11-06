@@ -1,0 +1,1 @@
+-- customer_usage table is defined in the data-modeling step.
