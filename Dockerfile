@@ -1,7 +1,7 @@
 # Multi-stage build for the MeterMesh node binary.
 FROM golang:1.27-alpine AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -o /out/metermesh ./cmd/server

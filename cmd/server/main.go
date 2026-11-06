@@ -1,9 +1,104 @@
 // Command server is the MeterMesh node process.
-// It loads this node's config, joins the cluster, and serves the ingestion API.
+// It loads this node's config, accepts usage, and flushes hourly totals to Postgres.
 package main
 
-import "log"
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"metermesh/internal/config"
+	"metermesh/internal/ingestion"
+	"metermesh/internal/pipeline"
+	"metermesh/internal/repository"
+)
 
 func main() {
-	log.Print("metermesh: node skeleton")
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+
+	batcher := pipeline.New(cfg.QueueSize, log)
+	store := repository.New(cfg.PostgresURL)
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() {
+		batcher.Run(runCtx)
+		close(runDone)
+	}()
+	go flushLoop(runCtx, batcher, store, cfg.FlushInterval)
+
+	srv := &http.Server{
+		Addr:              cfg.ListenAddr,
+		Handler:           ingestion.New(cfg.NodeID, batcher, log),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+	}
+
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-sigCtx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Error("shutdown", "error", err)
+		}
+		cancelRun()
+	}()
+
+	log.Info("node listening",
+		"node_id", cfg.NodeID,
+		"addr", cfg.ListenAddr,
+		"queue_size", cfg.QueueSize,
+		"flush_interval", cfg.FlushInterval.String(),
+	)
+	listenErr := srv.ListenAndServe()
+	cancelRun()
+	<-runDone
+
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), 5*time.Second)
+	flushErr := batcher.Flush(flushCtx, store)
+	cancelFlush()
+	closeErr := store.Close()
+
+	if flushErr != nil {
+		log.Error("final flush", "error", flushErr)
+	}
+	if closeErr != nil {
+		log.Error("close postgres", "error", closeErr)
+	}
+	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
+		log.Error("listen", "error", listenErr)
+		os.Exit(1)
+	}
+	if flushErr != nil {
+		os.Exit(1)
+	}
+}
+
+func flushLoop(ctx context.Context, batcher *pipeline.Batcher, store pipeline.Store, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = batcher.Flush(flushCtx, store)
+			cancel()
+		}
+	}
 }
