@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -12,6 +13,7 @@ import (
 type Config struct {
 	NodeID        string
 	ListenAddr    string
+	AdvertiseURL  string
 	PostgresURL   string
 	RedisURL      string
 	QueueSize     int
@@ -29,6 +31,7 @@ func Load() (Config, error) {
 		QueueSize:     1024,
 		FlushInterval: 5 * time.Second,
 	}
+	cfg.AdvertiseURL = env("ADVERTISE_URL", advertiseDefault(cfg.ListenAddr))
 
 	if raw := os.Getenv("FLUSH_INTERVAL"); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -47,6 +50,17 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func advertiseDefault(listen string) string {
+	switch {
+	case strings.HasPrefix(listen, "http://"), strings.HasPrefix(listen, "https://"):
+		return listen
+	case strings.HasPrefix(listen, ":"):
+		return "http://127.0.0.1" + listen
+	default:
+		return "http://" + listen
+	}
 }
 
 func env(key, fallback string) string {

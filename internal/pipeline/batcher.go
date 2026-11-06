@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"metermesh/internal/domain"
@@ -13,6 +14,15 @@ import (
 
 // ErrQueueFull means this node is at its local event limit.
 var ErrQueueFull = errors.New("usage queue is full")
+
+// Counters track how many events this node kept and how many rows it wrote.
+// events_accepted divided by rows_flushed is the compression of the flush.
+type Counters struct {
+	Accepted        atomic.Int64
+	Forwarded       atomic.Int64
+	RowsFlushed     atomic.Int64
+	QuantityFlushed atomic.Int64
+}
 
 // Store writes one flush of hourly deltas. Quantities are increments.
 type Store interface {
@@ -23,8 +33,9 @@ type Store interface {
 // totals is everything accepted since the process started. pending is the
 // part not yet acknowledged by the store.
 type Batcher struct {
-	events chan domain.UsageEvent
-	log    *slog.Logger
+	events   chan domain.UsageEvent
+	log      *slog.Logger
+	counters *Counters
 
 	mu      sync.Mutex
 	totals  map[domain.AggregateKey]int64
@@ -37,11 +48,17 @@ func New(queueSize int, log *slog.Logger) *Batcher {
 		log = slog.Default()
 	}
 	return &Batcher{
-		events:  make(chan domain.UsageEvent, queueSize),
-		log:     log,
-		totals:  make(map[domain.AggregateKey]int64),
-		pending: make(map[domain.AggregateKey]int64),
+		events:   make(chan domain.UsageEvent, queueSize),
+		log:      log,
+		counters: &Counters{},
+		totals:   make(map[domain.AggregateKey]int64),
+		pending:  make(map[domain.AggregateKey]int64),
 	}
+}
+
+// Counters returns the compression counters for this node.
+func (b *Batcher) Counters() *Counters {
+	return b.counters
 }
 
 // Submit enqueues an event. It returns ErrQueueFull instead of blocking
@@ -93,6 +110,8 @@ func (b *Batcher) Flush(ctx context.Context, store Store) error {
 	for _, n := range batch {
 		quantity += n
 	}
+	b.counters.RowsFlushed.Add(int64(len(batch)))
+	b.counters.QuantityFlushed.Add(quantity)
 	b.log.Info("flushed usage", "rows", len(batch), "quantity", quantity)
 	return nil
 }

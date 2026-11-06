@@ -1,5 +1,5 @@
 // Command server is the MeterMesh node process.
-// It loads this node's config, accepts usage, and flushes hourly totals to Postgres.
+// It loads this node's config, owns a share of customers, and flushes their hourly totals to Postgres.
 package main
 
 import (
@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"metermesh/internal/cluster"
 	"metermesh/internal/config"
 	"metermesh/internal/ingestion"
 	"metermesh/internal/pipeline"
@@ -27,6 +28,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	rdb, err := cluster.OpenRedis(cfg.RedisURL)
+	if err != nil {
+		log.Warn("redis membership unavailable; this node owns every customer", "error", err)
+		rdb = nil
+	} else {
+		defer rdb.Close()
+	}
+	dir := cluster.NewDirectory(cluster.Member{ID: cfg.NodeID, URL: cfg.AdvertiseURL}, rdb, log)
+	beatCtx, cancelBeat := context.WithTimeout(context.Background(), 2*time.Second)
+	dir.Beat(beatCtx)
+	cancelBeat()
+
 	batcher := pipeline.New(cfg.QueueSize, log)
 	store := repository.New(cfg.PostgresURL)
 
@@ -36,11 +49,12 @@ func main() {
 		batcher.Run(runCtx)
 		close(runDone)
 	}()
+	go dir.Run(runCtx)
 	go flushLoop(runCtx, batcher, store, cfg.FlushInterval)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           ingestion.New(cfg.NodeID, batcher, log),
+		Handler:           ingestion.New(cfg.NodeID, batcher, dir, log),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -63,6 +77,7 @@ func main() {
 		"addr", cfg.ListenAddr,
 		"queue_size", cfg.QueueSize,
 		"flush_interval", cfg.FlushInterval.String(),
+		"advertise_url", cfg.AdvertiseURL,
 	)
 	listenErr := srv.ListenAndServe()
 	cancelRun()

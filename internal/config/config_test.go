@@ -12,6 +12,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("REDIS_URL", "")
 	t.Setenv("USAGE_QUEUE_SIZE", "")
 	t.Setenv("FLUSH_INTERVAL", "")
+	t.Setenv("ADVERTISE_URL", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -26,6 +27,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.FlushInterval != 5*time.Second {
 		t.Fatalf("flush interval = %s", cfg.FlushInterval)
 	}
+	if cfg.AdvertiseURL != "http://127.0.0.1:8080" {
+		t.Fatalf("advertise = %s", cfg.AdvertiseURL)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -35,6 +39,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("REDIS_URL", "redis://cache:6379/1")
 	t.Setenv("USAGE_QUEUE_SIZE", "8")
 	t.Setenv("FLUSH_INTERVAL", "2s")
+	t.Setenv("ADVERTISE_URL", "http://node1:8080")
 
 	cfg, err := Load()
 	if err != nil {
@@ -48,6 +53,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.FlushInterval != 2*time.Second {
 		t.Fatalf("flush interval = %s", cfg.FlushInterval)
+	}
+	if cfg.AdvertiseURL != "http://node1:8080" {
+		t.Fatalf("advertise = %s", cfg.AdvertiseURL)
 	}
 }
 
