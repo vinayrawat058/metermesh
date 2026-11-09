@@ -22,25 +22,28 @@ const forwardedHeader = "X-MeterMesh-Forwarded"
 
 // Server is the HTTP front of one node.
 type Server struct {
-	nodeID  string
-	batcher *pipeline.Batcher
-	dir     *cluster.Directory
-	client  *http.Client
-	log     *slog.Logger
+	nodeID   string
+	batcher  *pipeline.Batcher
+	dir      *cluster.Directory
+	client   *http.Client
+	log      *slog.Logger
+	shutdown func()
 }
 
 // New returns a handler for health, ingestion, totals, ownership, and compression.
 // A nil directory means this process owns every customer.
-func New(nodeID string, batcher *pipeline.Batcher, dir *cluster.Directory, log *slog.Logger) http.Handler {
+// shutdown, when set, is called by POST /v1/admin/exit for a graceful stop.
+func New(nodeID string, batcher *pipeline.Batcher, dir *cluster.Directory, log *slog.Logger, shutdown func()) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
 	s := &Server{
-		nodeID:  nodeID,
-		batcher: batcher,
-		dir:     dir,
-		log:     log,
-		client:  &http.Client{Timeout: 2 * time.Second},
+		nodeID:   nodeID,
+		batcher:  batcher,
+		dir:      dir,
+		log:      log,
+		client:   &http.Client{Timeout: 2 * time.Second},
+		shutdown: shutdown,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
@@ -48,7 +51,18 @@ func New(nodeID string, batcher *pipeline.Batcher, dir *cluster.Directory, log *
 	mux.HandleFunc("GET /v1/totals", s.handleTotals)
 	mux.HandleFunc("GET /v1/stats", s.handleStats)
 	mux.HandleFunc("GET /v1/route", s.handleRoute)
+	mux.HandleFunc("POST /v1/admin/exit", s.handleExit)
 	return mux
+}
+
+func (s *Server) handleExit(w http.ResponseWriter, _ *http.Request) {
+	if s.shutdown == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "shutdown not configured"})
+		return
+	}
+	s.log.Info("admin exit requested", "node_id", s.nodeID)
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "shutting_down", "node_id": s.nodeID})
+	go s.shutdown()
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

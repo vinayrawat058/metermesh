@@ -7,6 +7,34 @@ import (
 	"github.com/alicebob/miniredis/v2"
 )
 
+func TestRunCancelKeepsHeartbeatUntilLeave(t *testing.T) {
+	mr := miniredis.RunT(t)
+	url := "redis://" + mr.Addr() + "/0"
+	dir := openDir(t, url, Member{ID: "node1", URL: "http://node1:8080"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		dir.Run(ctx)
+		close(done)
+	}()
+	dir.Beat(context.Background())
+	if !mr.Exists("metermesh:node:node1") {
+		t.Fatal("heartbeat missing while running")
+	}
+
+	cancel()
+	<-done
+	if !mr.Exists("metermesh:node:node1") {
+		t.Fatal("heartbeat should remain until Leave after the final flush")
+	}
+
+	dir.Leave(context.Background())
+	if mr.Exists("metermesh:node:node1") {
+		t.Fatal("heartbeat still present after Leave")
+	}
+}
+
 func TestHeartbeatAgreesOnOwnerAndLeaveMovesCustomer(t *testing.T) {
 	mr := miniredis.RunT(t)
 	url := "redis://" + mr.Addr() + "/0"

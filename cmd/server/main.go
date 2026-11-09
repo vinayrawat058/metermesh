@@ -45,29 +45,37 @@ func main() {
 
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	runDone := make(chan struct{})
+	flushDone := make(chan struct{})
 	go func() {
 		batcher.Run(runCtx)
 		close(runDone)
 	}()
 	go dir.Run(runCtx)
-	go flushLoop(runCtx, batcher, store, cfg.FlushInterval)
+	go func() {
+		flushLoop(runCtx, batcher, store, cfg.FlushInterval)
+		close(flushDone)
+	}()
+
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	srv := &http.Server{
-		Addr:              cfg.ListenAddr,
-		Handler:           ingestion.New(cfg.NodeID, batcher, dir, log),
+		Addr: cfg.ListenAddr,
+		Handler: ingestion.New(cfg.NodeID, batcher, dir, log, func() {
+			stop()
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
 	}
 
-	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	go func() {
 		<-sigCtx.Done()
+		log.Info("shutdown started", "node_id", cfg.NodeID)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Error("shutdown", "error", err)
+			log.Error("http shutdown", "error", err)
 		}
 		cancelRun()
 	}()
@@ -82,15 +90,24 @@ func main() {
 	listenErr := srv.ListenAndServe()
 	cancelRun()
 	<-runDone
+	<-flushDone
 
+	// Flush the last totals while this node is still listed in Redis, then leave
+	// so survivors take its customers only after those counts are saved.
 	flushCtx, cancelFlush := context.WithTimeout(context.Background(), 5*time.Second)
 	flushErr := batcher.Flush(flushCtx, store)
 	cancelFlush()
-	closeErr := store.Close()
-
 	if flushErr != nil {
 		log.Error("final flush", "error", flushErr)
+	} else {
+		log.Info("final flush complete", "node_id", cfg.NodeID)
 	}
+
+	leaveCtx, cancelLeave := context.WithTimeout(context.Background(), 2*time.Second)
+	dir.Leave(leaveCtx)
+	cancelLeave()
+
+	closeErr := store.Close()
 	if closeErr != nil {
 		log.Error("close postgres", "error", closeErr)
 	}

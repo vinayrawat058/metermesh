@@ -93,8 +93,9 @@ func (d *Directory) ReplaceMembers(members []Member) {
 	}
 }
 
-// Run refreshes this node's heartbeat until ctx is canceled, then removes it
-// so other nodes can take its customers without waiting for the TTL.
+// Run refreshes this node's heartbeat until ctx is canceled.
+// It does not remove the Redis key. Call Leave after the final flush so
+// customers move only once the last totals are saved.
 func (d *Directory) Run(ctx context.Context) {
 	d.Beat(ctx)
 	ticker := time.NewTicker(heartbeatInterval)
@@ -102,9 +103,6 @@ func (d *Directory) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			leaveCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-			d.Leave(leaveCtx)
-			cancel()
 			return
 		case <-ticker.C:
 			d.Beat(context.Background())
@@ -129,14 +127,22 @@ func (d *Directory) Beat(ctx context.Context) {
 	d.ReplaceMembers(ensureSelf(members, d.self))
 }
 
-// Leave removes this node from the live set.
+// Leave removes this node from the live set so survivors can take its customers
+// without waiting for the heartbeat TTL.
 func (d *Directory) Leave(ctx context.Context) {
 	if d.rdb == nil {
 		return
 	}
 	if err := d.rdb.Del(ctx, nodeKeyPrefix+d.self.ID).Err(); err != nil {
 		d.log.Warn("leave failed", "error", err)
+		return
 	}
+	d.log.Info("left membership", "node_id", d.self.ID)
+}
+
+// MembershipTTL is how long a missing heartbeat can sit before survivors drop the node.
+func MembershipTTL() time.Duration {
+	return membershipTTL
 }
 
 func (d *Directory) load(ctx context.Context) ([]Member, error) {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestUsageAcceptedThenVisibleInTotals(t *testing.T) {
 	defer cancel()
 	go batcher.Run(ctx)
 
-	handler := New("local", batcher, nil, discardLog())
+	handler := New("local", batcher, nil, discardLog(), nil)
 	body := `{"customer_id":"acme","metric":"tokens","quantity":10}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/usage", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -44,7 +45,7 @@ func TestUsageAcceptedThenVisibleInTotals(t *testing.T) {
 }
 
 func TestUsageRejectsWhenQueueIsFull(t *testing.T) {
-	handler := New("local", pipeline.New(1, discardLog()), nil, discardLog())
+	handler := New("local", pipeline.New(1, discardLog()), nil, discardLog(), nil)
 	post := func() int {
 		req := httptest.NewRequest(http.MethodPost, "/v1/usage", strings.NewReader(`{"customer_id":"acme","metric":"tokens","quantity":1}`))
 		rec := httptest.NewRecorder()
@@ -61,7 +62,7 @@ func TestUsageRejectsWhenQueueIsFull(t *testing.T) {
 }
 
 func TestUsageRejectsBadEvents(t *testing.T) {
-	handler := New("local", pipeline.New(2, discardLog()), nil, discardLog())
+	handler := New("local", pipeline.New(2, discardLog()), nil, discardLog(), nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/usage", strings.NewReader(`{"customer_id":"acme","metric":"tokens","quantity":0}`))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -76,13 +77,13 @@ func TestUsageForwardsToTheOwningNode(t *testing.T) {
 	defer cancel()
 	go ownerBatcher.Run(ctx)
 
-	ownerServer := httptest.NewServer(New("node2", ownerBatcher, nil, discardLog()))
+	ownerServer := httptest.NewServer(New("node2", ownerBatcher, nil, discardLog(), nil))
 	defer ownerServer.Close()
 
 	edgeBatcher := pipeline.New(4, discardLog())
 	dir := cluster.NewDirectory(cluster.Member{ID: "node1", URL: "http://node1:8080"}, nil, discardLog())
 	dir.ReplaceMembers([]cluster.Member{{ID: "node2", URL: ownerServer.URL}})
-	edge := New("node1", edgeBatcher, dir, discardLog())
+	edge := New("node1", edgeBatcher, dir, discardLog(), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/usage", strings.NewReader(`{"customer_id":"acme","metric":"tokens","quantity":10}`))
 	rec := httptest.NewRecorder()
@@ -106,7 +107,7 @@ func TestForwardedEventStaysOnThisNode(t *testing.T) {
 
 	dir := cluster.NewDirectory(cluster.Member{ID: "node1", URL: "http://node1:8080"}, nil, discardLog())
 	dir.ReplaceMembers([]cluster.Member{{ID: "node2", URL: "http://127.0.0.1:9"}})
-	handler := New("node1", batcher, dir, discardLog())
+	handler := New("node1", batcher, dir, discardLog(), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/usage", strings.NewReader(`{"customer_id":"acme","metric":"tokens","quantity":4}`))
 	req.Header.Set("X-MeterMesh-Forwarded", "1")
@@ -125,7 +126,7 @@ func TestStatsShowCompression(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go batcher.Run(ctx)
-	handler := New("local", batcher, nil, discardLog())
+	handler := New("local", batcher, nil, discardLog(), nil)
 
 	for _, body := range []string{
 		`{"customer_id":"acme","metric":"tokens","quantity":10}`,
@@ -148,6 +149,26 @@ func TestStatsShowCompression(t *testing.T) {
 	if !strings.Contains(body, `"events_accepted":2`) || !strings.Contains(body, `"rows_flushed":1`) {
 		t.Fatalf("stats = %s", body)
 	}
+}
+
+func TestAdminExitCallsShutdown(t *testing.T) {
+	var called atomic.Bool
+	handler := New("local", pipeline.New(1, discardLog()), nil, discardLog(), func() {
+		called.Store(true)
+	})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/admin/exit", nil))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if called.Load() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("shutdown was not called")
 }
 
 type okStore struct{}
