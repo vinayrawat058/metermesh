@@ -165,7 +165,7 @@ Planned direction:
 3. Record success only after Postgres acknowledges the write.
 4. On restart, skip or safely replay batches that already landed.
 
-Until that lands, treat MeterMesh as **at-most-once across crashes** for unflushed memory, and **at-least-once** across lost flush replies. Say that plainly in any production discussion.
+Until that lands, treat MeterMesh as **at-most-once across crashes** for unflushed memory, and **at-least-once** across lost flush replies. 
 
 ## Development
 
