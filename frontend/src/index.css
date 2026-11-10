@@ -1,0 +1,95 @@
+@import "@fontsource/space-grotesk/500.css";
+@import "@fontsource/space-grotesk/700.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "tailwindcss";
+
+:root {
+  --ink: #0f1c1a;
+  --ink-soft: #243330;
+  --paper: #eef4f1;
+  --paper-deep: #d8e6df;
+  --line: #b7c9c0;
+  --accent: #1fa37a;
+  --accent-deep: #0f6f52;
+  --warn: #b45309;
+  --live: #1fa37a;
+  --down: #9a3412;
+  --display: "Space Grotesk", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--display);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(31, 163, 122, 0.18), transparent 42%),
+    radial-gradient(circle at 88% 0%, rgba(15, 28, 26, 0.08), transparent 36%),
+    linear-gradient(160deg, #f5faf7 0%, var(--paper) 48%, #e4efe8 100%);
+  background-attachment: fixed;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(15, 28, 26, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 28, 26, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent 90%);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.55;
+  }
+}
+
+@keyframes bar-grow {
+  from {
+    transform: scaleY(0.15);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

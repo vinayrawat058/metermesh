@@ -37,9 +37,12 @@ type Batcher struct {
 	log      *slog.Logger
 	counters *Counters
 
-	mu      sync.Mutex
-	totals  map[domain.AggregateKey]int64
-	pending map[domain.AggregateKey]int64
+	mu                sync.Mutex
+	totals            map[domain.AggregateKey]int64
+	pending           map[domain.AggregateKey]int64
+	lastFlushAt       time.Time
+	lastFlushRows     int
+	lastFlushQuantity int64
 }
 
 // New returns a batcher whose queue holds at most queueSize events.
@@ -112,8 +115,31 @@ func (b *Batcher) Flush(ctx context.Context, store Store) error {
 	}
 	b.counters.RowsFlushed.Add(int64(len(batch)))
 	b.counters.QuantityFlushed.Add(quantity)
+	b.mu.Lock()
+	b.lastFlushAt = time.Now().UTC()
+	b.lastFlushRows = len(batch)
+	b.lastFlushQuantity = quantity
+	b.mu.Unlock()
 	b.log.Info("flushed usage", "rows", len(batch), "quantity", quantity)
 	return nil
+}
+
+// PendingKeys returns how many hourly buckets are waiting to flush.
+func (b *Batcher) PendingKeys() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.pending)
+}
+
+// LastFlush returns the most recent successful flush details.
+// ok is false when this process has not flushed yet.
+func (b *Batcher) LastFlush() (at time.Time, rows int, quantity int64, ok bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.lastFlushAt.IsZero() {
+		return time.Time{}, 0, 0, false
+	}
+	return b.lastFlushAt, b.lastFlushRows, b.lastFlushQuantity, true
 }
 
 // Snapshot copies the totals accepted since this process started.

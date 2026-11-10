@@ -64,9 +64,8 @@ func main() {
 		Handler: ingestion.New(cfg.NodeID, batcher, dir, log, func() {
 			stop()
 		}),
+		// WriteTimeout stays unset so the SSE metrics stream can stay open.
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
 	}
 
 	go func() {

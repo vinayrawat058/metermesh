@@ -16,7 +16,7 @@ There is no invoice, price, or tax logic here. A crash drops counts that have no
 
 On a graceful stop the node stops accepting traffic, flushes the totals still in memory, and only then deletes its Redis heartbeat. Survivors take its customers after that. A hard kill skips the flush, so those counts are lost and the heartbeat expires after a few seconds.
 
-`GET /v1/route?customer_id=acme` shows which node owns that customer. `GET /v1/totals` shows what this process has accepted. `POST /v1/admin/exit` starts a graceful shutdown on that node.
+`GET /v1/route?customer_id=acme` shows which node owns that customer. `GET /v1/totals` shows what this process has accepted. `GET /v1/metrics/stream` is an SSE feed of live node metrics. `POST /v1/admin/exit` starts a graceful shutdown on that node.
 
 ## Layout
 
@@ -51,7 +51,17 @@ curl -X POST http://localhost:8080/v1/usage -H "Content-Type: application/json" 
 docker compose up --build
 ```
 
-Postgres, Redis, and three nodes come up. Nodes listen on ports 8081, 8082, and 8083. Inside the Compose network they reach each other as `node1`, `node2`, and `node3`.
+Postgres, Redis, three nodes, and the dashboard come up. Nodes listen on ports 8081, 8082, and 8083. The dashboard is on [http://localhost:3000](http://localhost:3000). Inside the Compose network the nodes reach each other as `node1`, `node2`, and `node3`.
+
+### Dashboard only
+
+```
+cd frontend
+npm install
+npm run dev
+```
+
+The Vite app streams metrics from ports 8081–8083 by default. Override with `VITE_NODES`.
 
 ## Failover check
 

@@ -51,8 +51,22 @@ func New(nodeID string, batcher *pipeline.Batcher, dir *cluster.Directory, log *
 	mux.HandleFunc("GET /v1/totals", s.handleTotals)
 	mux.HandleFunc("GET /v1/stats", s.handleStats)
 	mux.HandleFunc("GET /v1/route", s.handleRoute)
+	mux.HandleFunc("GET /v1/metrics/stream", s.handleMetricsStream)
 	mux.HandleFunc("POST /v1/admin/exit", s.handleExit)
-	return mux
+	return withCORS(mux)
+}
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleExit(w http.ResponseWriter, _ *http.Request) {

@@ -73,3 +73,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  dashboard:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - node1
+      - node2
+      - node3
