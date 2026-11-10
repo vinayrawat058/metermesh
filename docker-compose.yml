@@ -1,5 +1,5 @@
-# Local cluster: three MeterMesh nodes, PostgreSQL, and Redis.
-# Each customer is totaled on one node. That node flushes the sums to Postgres.
+# Local cluster: load balancer, three MeterMesh nodes, PostgreSQL, and Redis.
+# Clients post to the balancer. Each customer is totaled on one owner node.
 
 x-node-env: &node-env
   LISTEN_ADDR: ":8080"
@@ -74,6 +74,17 @@ services:
       redis:
         condition: service_healthy
 
+  lb:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - node1
+      - node2
+      - node3
+
   dashboard:
     build: ./frontend
     ports:
@@ -82,3 +93,4 @@ services:
       - node1
       - node2
       - node3
+      - lb

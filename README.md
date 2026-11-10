@@ -8,8 +8,8 @@ There is no invoice, price, or tax logic here. A crash drops counts that have no
 
 ## How a request moves
 
-1. `POST /v1/usage` can land on any node.
-2. The node hashes the customer across the live nodes and forwards the event when it is not the owner.
+1. Clients post `POST /v1/usage` to the load balancer on port 8080, which picks any live node.
+2. That node hashes the customer across the live nodes and forwards the event when it is not the owner.
 3. The owner adds the quantity to that customer's total for the current UTC hour.
 4. Every few seconds the owner adds the new totals into `customer_usage`.
 5. `GET /v1/stats` shows events accepted on this node and rows written, so you can see many events become one database write.
@@ -29,6 +29,7 @@ internal/ingestion/    HTTP ingestion, forwarding, and backpressure
 internal/pipeline/     in-memory aggregation and flush
 internal/repository/   PostgreSQL upserts
 frontend/              live cluster dashboard
+deploy/nginx/          load balancer config
 migrations/            SQL schema
 scripts/stress_test.sh load and failover check
 ```
@@ -51,7 +52,7 @@ curl -X POST http://localhost:8080/v1/usage -H "Content-Type: application/json" 
 docker compose up --build
 ```
 
-Postgres, Redis, three nodes, and the dashboard come up. Nodes listen on ports 8081, 8082, and 8083. The dashboard is on [http://localhost:3000](http://localhost:3000). Inside the Compose network the nodes reach each other as `node1`, `node2`, and `node3`.
+Postgres, Redis, three nodes, the nginx load balancer, and the dashboard come up. Post usage to [http://localhost:8080](http://localhost:8080). Direct node ports stay on 8081–8083 for the dashboard and admin exit. The dashboard is on [http://localhost:3000](http://localhost:3000). Inside the Compose network the nodes reach each other as `node1`, `node2`, and `node3`.
 
 ### Dashboard only
 
@@ -63,10 +64,10 @@ npm run dev
 
 The Vite app streams metrics from ports 8081–8083 by default. Override with `VITE_NODES`.
 
-## Failover check
+## Load and failover check
 
 ```
 bash scripts/stress_test.sh
 ```
 
-The script posts usage for `acme`, asks the current owner to exit, waits for the route to change, and posts again to the survivor.
+The script sends a burst of usage events through the load balancer, prints per-node stats, asks the current owner to exit, waits for the route to change, and posts again through the balancer.

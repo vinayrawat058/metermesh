@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Posts usage at any node, asks the current owner to shut down gracefully,
-# then shows that the customer moves and new events still land.
+# Blasts usage through the load balancer, then asks the current owner to shut
+# down gracefully and shows that the customer moves to a survivor.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 CUSTOMER="${CUSTOMER:-acme}"
-ENTRY="${ENTRY:-http://127.0.0.1:8081}"
-PORTS=(8081 8082 8083)
+ENTRY="${ENTRY:-http://127.0.0.1:8080}"
+LOAD_COUNT="${LOAD_COUNT:-120}"
+PORTS=(8080 8081 8082 8083)
 
 wait_healthy() {
   local port="$1"
@@ -19,7 +20,7 @@ wait_healthy() {
     fi
     sleep 1
   done
-  echo "node on :${port} did not become healthy" >&2
+  echo "service on :${port} did not become healthy" >&2
   return 1
 }
 
@@ -28,7 +29,6 @@ route_json() {
 }
 
 owner_id_from() {
-  # {"customer_id":"acme","local":false,"owner_id":"node2","owner_url":"..."}
   printf '%s' "$1" | sed -n 's/.*"owner_id":"\([^"]*\)".*/\1/p'
 }
 
@@ -51,15 +51,31 @@ for port in "${PORTS[@]}"; do
   wait_healthy "$port"
 done
 
+echo "blasting ${LOAD_COUNT} usage events through ${ENTRY}"
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+ok=0
+for i in $(seq 1 "$LOAD_COUNT"); do
+  if curl -fsS -X POST "${ENTRY}/v1/usage" \
+    -H "Content-Type: application/json" \
+    -d "{\"customer_id\":\"${CUSTOMER}\",\"metric\":\"tokens\",\"quantity\":1}" \
+    >/dev/null; then
+    ok=$((ok + 1))
+  fi
+done
+echo "accepted ${ok}/${LOAD_COUNT} through the load balancer"
+
+echo "per-node stats after the blast"
+for port in 8081 8082 8083; do
+  echo "--- :${port} ---"
+  curl -fsS "http://127.0.0.1:${port}/v1/stats" || true
+  echo
+done
+
 BEFORE="$(route_json "$ENTRY")"
 OLD_OWNER="$(owner_id_from "$BEFORE")"
 OWNER_PORT="$(port_for_node "$OLD_OWNER")"
-echo "before: $BEFORE"
-
-echo "posting usage through ${ENTRY}"
-curl -fsS -X POST "${ENTRY}/v1/usage" \
-  -H "Content-Type: application/json" \
-  -d "{\"customer_id\":\"${CUSTOMER}\",\"metric\":\"tokens\",\"quantity\":10}" >/dev/null
+echo "before failover: $BEFORE"
 
 echo "asking ${OLD_OWNER} on :${OWNER_PORT} to shut down gracefully"
 curl -fsS -X POST "http://127.0.0.1:${OWNER_PORT}/v1/admin/exit" >/dev/null
@@ -77,13 +93,13 @@ for _ in $(seq 1 40); do
   fi
 done
 
-echo "after:  $AFTER"
+echo "after failover:  $AFTER"
 if [[ "$NEW_OWNER" == "$OLD_OWNER" || -z "$NEW_OWNER" ]]; then
   echo "failover failed: ${CUSTOMER} is still owned by ${OLD_OWNER}" >&2
   exit 1
 fi
 
-echo "posting again after failover"
+echo "posting again through the load balancer after failover"
 curl -fsS -X POST "${ENTRY}/v1/usage" \
   -H "Content-Type: application/json" \
   -d "{\"customer_id\":\"${CUSTOMER}\",\"metric\":\"tokens\",\"quantity\":5}" >/dev/null
@@ -92,4 +108,4 @@ NEW_PORT="$(port_for_node "$NEW_OWNER")"
 echo "new owner totals:"
 curl -fsS "http://127.0.0.1:${NEW_PORT}/v1/totals"
 echo
-echo "failover ok: ${CUSTOMER} moved from ${OLD_OWNER} to ${NEW_OWNER}"
+echo "load balancer + failover ok: ${CUSTOMER} moved from ${OLD_OWNER} to ${NEW_OWNER}"
