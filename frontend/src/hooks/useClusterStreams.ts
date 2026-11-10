@@ -3,6 +3,9 @@ import { configuredNodes } from '../nodes'
 import type { MetricsEvent, NodeLiveState } from '../types'
 
 const HISTORY = 24
+// EventSource fires onerror while the browser is still reconnecting.
+// Wait out a short grace window so brief reconnects do not blink the UI.
+const DISCONNECT_GRACE_MS = 2500
 
 function emptyState(endpoint: ReturnType<typeof configuredNodes>[number]): NodeLiveState {
   return {
@@ -20,12 +23,34 @@ export function useClusterStreams() {
 
   useEffect(() => {
     const sources: EventSource[] = []
+    const disconnectTimers: Array<ReturnType<typeof setTimeout> | undefined> = []
+
+    const clearDisconnectTimer = (index: number) => {
+      const timer = disconnectTimers[index]
+      if (timer !== undefined) {
+        clearTimeout(timer)
+        disconnectTimers[index] = undefined
+      }
+    }
+
+    const markDisconnected = (index: number, endpoint: (typeof endpoints)[number], error: string) => {
+      setNodes((current) => {
+        const next = [...current]
+        next[index] = {
+          ...(next[index] ?? emptyState(endpoint)),
+          connected: false,
+          error,
+        }
+        return next
+      })
+    }
 
     endpoints.forEach((endpoint, index) => {
       const source = new EventSource(`${endpoint.baseUrl}/v1/metrics/stream`)
       sources.push(source)
 
       source.addEventListener('metrics', (message) => {
+        clearDisconnectTimer(index)
         try {
           const metrics = JSON.parse((message as MessageEvent).data) as MetricsEvent
           setNodes((current) => {
@@ -42,32 +67,38 @@ export function useClusterStreams() {
             return next
           })
         } catch (error) {
-          setNodes((current) => {
-            const next = [...current]
-            next[index] = {
-              ...(next[index] ?? emptyState(endpoint)),
-              connected: false,
-              error: error instanceof Error ? error.message : 'bad metrics payload',
-            }
-            return next
-          })
+          markDisconnected(
+            index,
+            endpoint,
+            error instanceof Error ? error.message : 'bad metrics payload',
+          )
         }
       })
 
       source.onerror = () => {
-        setNodes((current) => {
-          const next = [...current]
-          next[index] = {
-            ...(next[index] ?? emptyState(endpoint)),
-            connected: false,
-            error: 'stream disconnected',
+        // Still reconnecting — keep the last live metrics until grace expires.
+        if (source.readyState === EventSource.CONNECTING) {
+          if (disconnectTimers[index] !== undefined) {
+            return
           }
-          return next
-        })
+          disconnectTimers[index] = setTimeout(() => {
+            disconnectTimers[index] = undefined
+            markDisconnected(index, endpoint, 'stream disconnected')
+          }, DISCONNECT_GRACE_MS)
+          return
+        }
+
+        clearDisconnectTimer(index)
+        markDisconnected(index, endpoint, 'stream disconnected')
       }
     })
 
     return () => {
+      disconnectTimers.forEach((timer) => {
+        if (timer !== undefined) {
+          clearTimeout(timer)
+        }
+      })
       sources.forEach((source) => source.close())
     }
   }, [endpoints])
