@@ -85,6 +85,24 @@ services:
       - node2
       - node3
 
+  ops:
+    build:
+      context: .
+      dockerfile: Dockerfile.ops
+    environment:
+      LISTEN_ADDR: ":8090"
+      COMPOSE_PROJECT: metermesh
+      DOCKER_HOST: unix:///var/run/docker.sock
+    ports:
+      # Localhost only: this can start containers via the Docker socket.
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - node1
+      - node2
+      - node3
+
   dashboard:
     build: ./frontend
     ports:
@@ -94,3 +112,4 @@ services:
       - node2
       - node3
       - lb
+      - ops

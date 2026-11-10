@@ -81,3 +81,15 @@ export async function requestExit(baseUrl: string) {
     throw new Error(`exit failed (${response.status})`)
   }
 }
+
+const OPS_URL = (import.meta.env.VITE_OPS_URL as string | undefined)?.replace(/\/$/, '') || 'http://127.0.0.1:8090'
+
+export async function requestStart(nodeId: string) {
+  const response = await fetch(`${OPS_URL}/v1/admin/nodes/${encodeURIComponent(nodeId)}/start`, {
+    method: 'POST',
+  })
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(body || `restart failed (${response.status})`)
+  }
+}

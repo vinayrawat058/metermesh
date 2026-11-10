@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { requestExit, useClusterStreams } from './hooks/useClusterStreams'
+import { requestExit, requestStart, useClusterStreams } from './hooks/useClusterStreams'
 import type { NodeLiveState } from './types'
 
 function formatRate(value: number) {
@@ -33,14 +33,19 @@ function Sparkline({ values }: { values: number[] }) {
 function NodeRow({
   node,
   onExit,
+  onRestart,
   exiting,
+  restarting,
 }: {
   node: NodeLiveState
   onExit: (baseUrl: string) => void
+  onRestart: (nodeId: string) => void
   exiting: boolean
+  restarting: boolean
 }) {
   const metrics = node.metrics
   const live = node.connected && metrics !== null
+  const nodeId = metrics?.node_id ?? node.endpoint.id
 
   return (
     <article
@@ -57,9 +62,7 @@ function NodeRow({
             }}
             aria-hidden="true"
           />
-          <h2 className="text-2xl font-bold tracking-tight">
-            {metrics?.node_id ?? node.endpoint.id}
-          </h2>
+          <h2 className="text-2xl font-bold tracking-tight">{nodeId}</h2>
         </div>
         <p className="font-[family-name:var(--mono)] text-sm text-[var(--ink-soft)]">
           {node.endpoint.baseUrl}
@@ -100,7 +103,15 @@ function NodeRow({
         </div>
       </div>
 
-      <div className="flex items-start justify-end">
+      <div className="flex items-start justify-end gap-2">
+        <button
+          type="button"
+          disabled={live || restarting}
+          onClick={() => onRestart(nodeId)}
+          className="border border-[var(--accent-deep)] bg-transparent px-4 py-2 font-[family-name:var(--mono)] text-sm text-[var(--accent-deep)] transition enabled:hover:-translate-y-0.5 enabled:hover:bg-[var(--accent)] enabled:hover:text-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {restarting ? 'starting…' : 'restart'}
+        </button>
         <button
           type="button"
           disabled={!live || exiting}
@@ -117,6 +128,7 @@ function NodeRow({
 export default function App() {
   const nodes = useClusterStreams()
   const [exitingUrl, setExitingUrl] = useState<string | null>(null)
+  const [restartingId, setRestartingId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const liveCount = nodes.filter((node) => node.connected).length
@@ -143,6 +155,18 @@ export default function App() {
     }
   }
 
+  async function handleRestart(nodeId: string) {
+    setActionError(null)
+    setRestartingId(nodeId)
+    try {
+      await requestStart(nodeId)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'restart failed')
+    } finally {
+      setRestartingId(null)
+    }
+  }
+
   return (
     <main className="relative mx-auto min-h-screen max-w-6xl px-5 pb-16 pt-10 sm:px-8">
       <header className="mb-10 space-y-4" style={{ animation: 'rise-in 500ms ease-out' }}>
@@ -154,7 +178,7 @@ export default function App() {
         </h1>
         <p className="max-w-2xl text-lg text-[var(--ink-soft)]">
           Live view of which nodes are up, how fast they are accepting usage, and when they last
-          flushed into Postgres. Kill a node to watch ownership move.
+          flushed into Postgres. Kill a node to watch ownership move, then restart it from here.
         </p>
       </header>
 
@@ -190,7 +214,9 @@ export default function App() {
             key={node.endpoint.baseUrl}
             node={node}
             onExit={handleExit}
+            onRestart={handleRestart}
             exiting={exitingUrl === node.endpoint.baseUrl}
+            restarting={restartingId === (node.metrics?.node_id ?? node.endpoint.id)}
           />
         ))}
       </section>

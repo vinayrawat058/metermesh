@@ -16,12 +16,13 @@ There is no invoice, price, or tax logic here. A crash drops counts that have no
 
 On a graceful stop the node stops accepting traffic, flushes the totals still in memory, and only then deletes its Redis heartbeat. Survivors take its customers after that. A hard kill skips the flush, so those counts are lost and the heartbeat expires after a few seconds.
 
-`GET /v1/route?customer_id=acme` shows which node owns that customer. `GET /v1/totals` shows what this process has accepted. `GET /v1/metrics/stream` is an SSE feed of live node metrics. `POST /v1/admin/exit` starts a graceful shutdown on that node.
+`GET /v1/route?customer_id=acme` shows which node owns that customer. `GET /v1/totals` shows what this process has accepted. `GET /v1/metrics/stream` is an SSE feed of live node metrics. `POST /v1/admin/exit` starts a graceful shutdown on that node. The dashboard **Restart** button calls the local ops service (`POST http://127.0.0.1:8090/v1/admin/nodes/{node}/start`), which starts that Docker container again. Ops is bound to localhost only and needs the Docker socket; do not expose it publicly.
 
 ## Layout
 
 ```
 cmd/server/            node process
+cmd/ops/               localhost demo control plane (restart nodes)
 internal/config/       environment configuration
 internal/domain/       billing types
 internal/cluster/      live nodes and customer ownership
@@ -52,7 +53,7 @@ curl -X POST http://localhost:8080/v1/usage -H "Content-Type: application/json" 
 docker compose up --build
 ```
 
-Postgres, Redis, three nodes, the nginx load balancer, and the dashboard come up. Post usage to [http://localhost:8080](http://localhost:8080). Direct node ports stay on 8081–8083 for the dashboard and admin exit. The dashboard is on [http://localhost:3000](http://localhost:3000). Inside the Compose network the nodes reach each other as `node1`, `node2`, and `node3`.
+Postgres, Redis, three nodes, the nginx load balancer, the ops control plane, and the dashboard come up. Post usage to [http://localhost:8080](http://localhost:8080). Direct node ports stay on 8081–8083 for the dashboard and admin exit. Ops listens on [http://127.0.0.1:8090](http://127.0.0.1:8090) for restarts. The dashboard is on [http://localhost:3000](http://localhost:3000). Inside the Compose network the nodes reach each other as `node1`, `node2`, and `node3`.
 
 ### Dashboard only
 
